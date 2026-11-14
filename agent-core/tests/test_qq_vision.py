@@ -16,6 +16,7 @@ from channel.qq_vision import (
 def _trigger(path, *, qq=True, kind="image"):
     return {
         "_qq_channel_turn": qq,
+        "_qq_channel_id": "qq_test",
         "_qq_image_files": [{"kind": kind, "path": str(path)}],
     }
 
@@ -78,6 +79,60 @@ class QQVisionTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(sent)
             self.assertEqual(messages[-1]["content"][-1]["type"], "image_url")
 
+
+    async def test_real_collector_trigger_uses_authenticated_channel_for_production_storage(self):
+        """No hand-crafted payload.channel_ids: exercise the actual Collector output."""
+        from collector import _build_trigger
+        import channel.qq_vision as vision
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            qqdir = root / "qq_test" / "20261114"
+            fsdir = root / "feishu_test" / "20261114"
+            qqdir.mkdir(parents=True)
+            fsdir.mkdir(parents=True)
+            image = qqdir / "from_qq.png"
+            other = fsdir / "private_feishu.png"
+            image.write_bytes(b"simulated-png")
+            other.write_bytes(b"private-other-channel")
+            payload = {
+                "platform": "qq", "channel_id": "qq_test",
+                "chat_id": "OpenIDChat123", "chat_type": "p2p",
+                "user_id": "official:1900000000:OpenIDUser1234567",
+                "message_id": "message-1", "sender_type": "user",
+                "user_role": "viewer", "text": "What is in this photo?",
+                "files": [
+                    {"kind": "image", "path": str(image), "name": "from_qq.png"},
+                    {"kind": "image", "path": str(other), "name": "private_feishu.png"},
+                ],
+            }
+            event = {
+                "source": "/channel/request/qq_test",
+                "text": json.dumps(payload), "ts": time.time(),
+            }
+            with mock.patch("channel.manager.manager.get_chat_history", return_value=[]):
+                trigger = _build_trigger([event], urgent=True)
+            self.assertTrue(trigger["_qq_channel_turn"])
+            self.assertEqual(trigger["_qq_channel_id"], "qq_test")
+            # Force the production shared-storage branch rather than the
+            # custom-root test shortcut used by older tests.
+            reader = mock.AsyncMock(return_value=[
+                {"type": "image_url", "image_url": "data:image/png;base64,dGVzdA=="}
+            ])
+            messages = [{"role": "user", "content": trigger["text"]}]
+            with mock.patch.object(vision, "_QQ_MEDIA_ROOT", root):
+                self.assertEqual(vision._approved_image_paths(trigger, root), [image])
+                self.assertTrue(await vision.add_qq_images(
+                    messages, trigger, media_root=root, reader=reader,
+                    vision_enabled=True))
+                reader.assert_awaited_once_with(image)
+                self.assertEqual(messages[0]["content"][-1]["type"], "image_url")
+                # This field is optional and must not govern file identity.
+                trigger.get("payload", {}).pop("channel_ids", None)
+                self.assertEqual(vision._approved_image_paths(trigger, root), [image])
+                trigger["_qq_channel_id"] = "not_this_channel"
+                self.assertEqual(vision._approved_image_paths(trigger, root), [])
+
     async def test_qq_image_not_inline_when_vision_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -119,7 +174,7 @@ class QQVisionTests(unittest.IsolatedAsyncioTestCase):
             other.write_bytes(b"not-this-channel")
             trigger = {
                 "_qq_channel_turn": True,
-                "payload": {"channel_ids": ["qq_test"]},
+                "_qq_channel_id": "qq_test",
                 "_qq_image_files": [
                     {"kind": "image", "path": str(good)},
                     {"kind": "image", "path": str(other)},
@@ -127,9 +182,12 @@ class QQVisionTests(unittest.IsolatedAsyncioTestCase):
             }
             with mock.patch.object(vision, "_QQ_MEDIA_ROOT", root):
                 self.assertEqual(vision._approved_image_paths(trigger, root), [good])
-                trigger["payload"]["channel_ids"] = ["qq_test", "feishu_test"]
+                # A forged/optional payload value cannot change the authenticated ID.
+                trigger["payload"] = {"channel_ids": ["feishu_test"]}
+                self.assertEqual(vision._approved_image_paths(trigger, root), [good])
+                trigger["_qq_channel_id"] = "other_qq"
                 self.assertEqual(vision._approved_image_paths(trigger, root), [])
-                trigger["payload"]["channel_ids"] = []
+                trigger["_qq_channel_id"] = ""
                 self.assertEqual(vision._approved_image_paths(trigger, root), [])
 
     async def test_oversize_or_absent_image_fails_closed(self):
@@ -156,7 +214,8 @@ class QQVisionTests(unittest.IsolatedAsyncioTestCase):
                 p.write_bytes(b"abc")
                 files.append({"kind": "image", "path": str(p)})
             files.append({"kind": "file", "path": str(root / "document.txt")})
-            trigger = {"_qq_channel_turn": True, "_qq_image_files": files}
+            trigger = {"_qq_channel_turn": True, "_qq_channel_id": "qq_test",
+                       "_qq_image_files": files}
             self.assertEqual(len(_approved_image_paths(trigger, root)), 2)
 
     async def test_gif_is_transcoded_to_jpeg_frames_before_llm(self):

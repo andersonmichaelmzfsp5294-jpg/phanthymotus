@@ -31,17 +31,14 @@ def _approved_image_paths(trigger: dict, media_root: Path = _QQ_MEDIA_ROOT) -> l
     files = trigger.get("_qq_image_files", [])
     if not isinstance(files, list):
         return []
+    # Use the authenticated Collector identity, not an optional payload field.
+    # The files still have to reside under this exact QQ Channel's directory.
+    name = trigger.get("_qq_channel_id")
+    if not isinstance(name, str) or not name:
+        return []
     base = media_root.resolve(strict=False)
     if base == _QQ_MEDIA_ROOT.resolve(strict=False):
-        # Shared storage contains Feishu and other channels as well.
-        # QQ may only read the attachment directory of its own channel.
         from channel.store import _safe_name
-        channels = (trigger.get("payload") or {}).get("channel_ids", [])
-        if not isinstance(channels, list) or len(channels) != 1:
-            return []
-        name = channels[0]
-        if not isinstance(name, str) or not name:
-            return []
         base = base / _safe_name(name)
     result = []
     for item in files[:_MAX_IMAGES_PER_TURN]:

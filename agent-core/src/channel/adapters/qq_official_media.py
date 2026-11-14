@@ -115,11 +115,22 @@ async def receive_media(client, event, cache_root: str) -> list[Attachment]:
 
 
 def _validate_outbound_file(attachment: Attachment) -> None:
-    path = Path(attachment.path).resolve(strict=True)
+    # Match Core's established /work and /tmp output policy. The previous
+    # qq_outbox-only directory was never populated by a production tool.
+    from event.desktop import _check_path_allowed
+    source = Path(attachment.path)
+    if source.is_symlink():
+        raise ValueError("QQ media source cannot be a symlink")
+    path = source.resolve(strict=True)
+    if _check_path_allowed(path):
+        raise ValueError("QQ media source is outside allowed Core output directories")
     if not path.is_file():
         raise ValueError("QQ attachment is not a regular file")
-    if not path.is_relative_to(Path("/work/resource/qq_outbox")):
-        raise ValueError("QQ media source must be in /work/resource/qq_outbox")
+    # Never transmit QQ's own saved AppSecret through the channel, even when
+    # the deployment database lives under an otherwise allowed /work volume.
+    from channel.qq_credential_store import directory as credential_directory
+    if path.is_relative_to(credential_directory().resolve(strict=False)):
+        raise ValueError("QQ managed credential files cannot be sent")
     if not 0 < path.stat().st_size <= _MAX_OUTBOUND:
         raise ValueError("QQ attachment size exceeds safe limit")
     if attachment.kind not in _FILE_TYPES:
