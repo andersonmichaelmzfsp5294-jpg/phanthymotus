@@ -2431,6 +2431,11 @@ class Event:
         bound_tool_names = {s['name'] for s in bound_schemas}
 
         # ── 冻结 system message（turn 内复用，保证 prefix caching 命中）────
+        # Snapshot this QQ chat's facts on a worker thread; keep system prefix stable.
+        if qq_private_turn and qq_memory_scope.get() is not None:
+            trigger_event = dict(trigger_event)
+            trigger_event['_qq_memory_facts'] = await prompt_mod.read_qq_scoped_facts(
+                qq_memory_scope.get())
         frozen_system = prompt_mod.build_system(mcp_client.registry, bound_tool_names,
                                                  qq_turn=qq_private_turn,
                                                  qq_scope=qq_memory_scope.get() if qq_private_turn else None)
@@ -2760,6 +2765,8 @@ class Event:
                             }
                         else:
                             result = _not_dispatched(name, _barrier_result)
+                    elif channel_principals and not await async_allowed_for_principals(channel_principals, name):
+                        result = 'Error: Channel access was revoked before tool execution.'
                     else:
                         result = await self._sys_tools[name]['object'](**args)
                 elif name.startswith('mcp__'):
@@ -2784,6 +2791,8 @@ class Event:
                         # yet) or just record it as not-dispatched.
                         result = _not_dispatched(name, _barrier_result)
                         _reconsidered = (_barrier_result.get('status') == 'reconsidering')
+                    elif channel_principals and not await async_allowed_for_principals(channel_principals, name):
+                        result = 'Error: Channel access was revoked during the ACP wait.'
                     else:
                         args['_trace_id'] = _trace_id
                         args['_cancel_event'] = cancel_event
@@ -2899,7 +2908,8 @@ class Event:
                 # appended before dispatch, don't record any tool result, drain the
                 # steering that triggered this, and retry with fresh context.
                 turn_messages.pop()
-                _steered_void = await collector.drain_steering()
+                _steered_void = _isolate_private_turn_steering(
+                    await collector.drain_steering(), qq_private_turn)
                 if _steered_void:
                     for sev in _steered_void:
                         turn_messages.append({'role': 'user', 'content':
@@ -2998,7 +3008,10 @@ class Event:
             # and throw away the prompt cache for nothing.
             skill_tools = {'activate_skill', 'deactivate_skill'}
             if any(c['function']['name'] in skill_tools for c in tool_calls):
-                frozen_system = prompt_mod.build_system(mcp_client.registry, bound_tool_names)
+                frozen_system = prompt_mod.build_system(
+                    mcp_client.registry, bound_tool_names,
+                    qq_turn=qq_private_turn,
+                    qq_scope=qq_memory_scope.get() if qq_private_turn else None)
 
             # ── Steering: 检查是否有用户消息需要注入 ─────────────────────────
             steered = await collector.drain_steering()

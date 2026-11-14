@@ -1,7 +1,10 @@
 """QQ SDK group auto-discovery and persistent group-level permission ceilings."""
 import time
+from collections import Counter
 
 import config
+
+_REJECTION_COUNTS = Counter()
 
 _POLICIES = 'qq_group_policies'
 
@@ -26,7 +29,10 @@ def approved(channel_id: str, group_id: str) -> bool:
 
 def _reject_observation(reason: str) -> bool:
     # Do not log user text, group OpenIDs or app credentials.
-    print(f'[qq-group] auto_enable_rejected reason={reason}', flush=True)
+    _REJECTION_COUNTS[reason] += 1
+    count = _REJECTION_COUNTS[reason]
+    if count == 1 or count % 100 == 0:
+        print(f'[qq-group] auto_enable_rejected reason={reason} count={count}', flush=True)
     return False
 
 

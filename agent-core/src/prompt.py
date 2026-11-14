@@ -21,6 +21,7 @@ L4  当前触发       本轮触发该次推理的事件，用 XML 格式标注�
     Turn 内多轮工具调用共享同一个 system message（由调用方冻结）
 """
 
+import asyncio
 import datetime
 import pathlib
 
@@ -404,15 +405,19 @@ def _trigger_message(event: dict) -> str:
 
 # ── 公共入口 ──────────────────────────────────────────────────────────────────
 
+async def read_qq_scoped_facts(scope: tuple[str, str] | None) -> list[str]:
+    """Snapshot authorized QQ chat facts on a worker instead of the event loop."""
+    if scope is None:
+        return []
+    from channel.manager import manager
+    return await asyncio.to_thread(manager.get_chat_memory, *scope)
+
+
 def _qq_system_definition(scope: tuple[str, str] | None) -> str:
+    # The system prefix is shared across QQ chats. Never put session facts
+    # here or synchronously read SQLite on the decision event loop.
     base = _system_definition(include_private_memory=False)
-    base += '\n\n本次是 QQ 独立会话，只能使用当前会话记忆。如需记住、读取、遗忘，使用 channel_memory_* 工具；禁止访问全局 Agent 记忆。'
-    if scope:
-        from channel.manager import manager as channel_manager
-        facts = channel_manager.get_chat_memory(*scope)
-        if facts:
-            base += '\n\n---当前 QQ 会话的长期记忆---\n' + '\n'.join('- ' + x for x in facts)
-    return base
+    return base + '\n\n本次是 QQ 独立会话，只能使用当前会话记忆。如需记住、读取、遗忘，使用 channel_memory_* 工具；禁止访问全局 Agent 记忆。'
 
 
 def build_system(mcp_registry: dict, bound_tools: set | None = None, *,
@@ -443,7 +448,15 @@ def build(
         trigger_event: L4 触发事件（从 collector 取到的 dict）。
     """
     # L2 动态信息 + L4 触发合并为一条 user message，减少消息数
-    dynamic = _env_dynamic(isolated=bool(trigger_event.get('_qq_channel_turn')))
+    qq_turn = bool(trigger_event.get('_qq_channel_turn'))
+    dynamic = _env_dynamic(isolated=qq_turn)
+    if qq_turn:
+        facts = trigger_event.get('_qq_memory_facts', [])
+        if isinstance(facts, list):
+            # Populated by the authenticated QQ turn on an async worker.
+            facts = [f[:500] for f in facts[:20] if isinstance(f, str) and f.strip()]
+            if facts:
+                dynamic += '\n\n---当前 QQ 会话的长期记忆---\n' + '\n'.join('- ' + f for f in facts)
     trigger = _trigger_message(trigger_event)
 
     return [

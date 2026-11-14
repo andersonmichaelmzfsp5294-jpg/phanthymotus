@@ -98,3 +98,19 @@ class QQSteeringIsolationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestQQVoidedRoundBarrierIsolation(unittest.TestCase):
+    def test_voided_round_defers_foreign_priority_events(self):
+        import inspect
+        source=inspect.getsource(Event._one_turn_impl)
+        branch=source.split("if _round_voided:",1)[1].split(
+            "# ── 把工具结果加入本轮消息",1)[0]
+        self.assertIn("_isolate_private_turn_steering(",branch)
+        external=[{"source":"dds:/local/voice","text":"LOCAL_USER_PRIVATE_EVENT"}]
+        with mock.patch.object(collector,"defer_priority") as deferred:
+            from event.llm import _isolate_private_turn_steering
+            safe=_isolate_private_turn_steering(external,True)
+            self.assertEqual(safe,[])
+            deferred.assert_called_once_with(external)
+        self.assertNotIn("LOCAL_USER_PRIVATE_EVENT","".join(str(x) for x in safe))

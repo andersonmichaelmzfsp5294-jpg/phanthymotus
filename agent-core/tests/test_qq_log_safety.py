@@ -45,3 +45,24 @@ def test_preview_is_bounded_and_llm_call_uses_safe_formatter():
     )
     assert "last_user = safe_user_log_preview(last_user_content, qq_turn=qq_private_turn)" in source
     assert "last_user = next((m.get('content', '')[:200]" not in source
+
+
+def test_qq_group_forward_and_rejection_logs_are_sampled():
+    from unittest import mock
+    from channel import qq_groups
+    from channel import manager as channel_manager
+    channel_manager._qq_group_forward_counts.clear()
+    qq_groups._REJECTION_COUNTS.clear()
+    with mock.patch("builtins.print") as logger:
+        for _ in range(201):
+            channel_manager._log_qq_group_forward("qq_official_1900000000")
+    lines=[str(x) for x in logger.call_args_list]
+    assert len(lines)==3
+    assert all("count=" in x for x in lines)
+    assert all("1900000000" not in x for x in lines)
+    with mock.patch("builtins.print") as logger:
+        for _ in range(201):
+            assert not qq_groups._reject_observation("invalid_principal")
+    lines=[str(x) for x in logger.call_args_list]
+    assert len(lines)==3
+    assert all("count=" in x for x in lines)

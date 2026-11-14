@@ -1,3 +1,4 @@
+import asyncio
 import pathlib
 import typing
 
@@ -15,7 +16,7 @@ class Event():
         if scope is None:
             return 'Error: no authorized QQ conversation'
         try:
-            added = manager.remember_chat_memory(*scope, text)
+            added = await asyncio.to_thread(manager.remember_chat_memory, *scope, text)
         except ValueError as exc:
             return f'Error: {exc}'
         return '已记入当前会话的长期记忆。' if added else '当前会话已保存这条记忆。'
@@ -27,7 +28,7 @@ class Event():
         scope = qq_memory_scope.get()
         if scope is None:
             return 'Error: no authorized QQ conversation'
-        facts = manager.get_chat_memory(*scope)
+        facts = await asyncio.to_thread(manager.get_chat_memory, *scope)
         return '\n'.join(f'- {item}' for item in facts) if facts else '当前会话没有长期记忆。'
 
     @log.function_(call=True)
@@ -39,7 +40,7 @@ class Event():
         scope = qq_memory_scope.get()
         if scope is None:
             return 'Error: no authorized QQ conversation'
-        deleted = manager.forget_chat_memory(*scope, text)
+        deleted = await asyncio.to_thread(manager.forget_chat_memory, *scope, text)
         return f'已从当前会话删除 {deleted} 条记忆。'
 
     @log.function_(call=True)

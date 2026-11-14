@@ -15,6 +15,7 @@ import math
 import re
 import time
 from contextvars import ContextVar
+from collections import Counter
 from threading import RLock
 
 import config
@@ -41,6 +42,17 @@ _CHAT_HISTORY_TEXT_MAX = 500
 _QQ_MEMORY_LIMIT = 20
 _QQ_MEMORY_ITEM_MAX = 500
 _qq_memory_lock = RLock()
+_qq_group_forward_counts = Counter()
+
+
+def _log_qq_group_forward(channel_id: str) -> None:
+    """At most one diagnostic per 100 repeated messages per configured Channel."""
+    _qq_group_forward_counts[channel_id] += 1
+    count = _qq_group_forward_counts[channel_id]
+    if count == 1 or count % 100 == 0:
+        print(f'[qq-group] auto_enable_passed forwarding_to_canvas count={count}', flush=True)
+
+
 qq_memory_scope: ContextVar[tuple[str, str] | None] = ContextVar('qq_memory_scope', default=None)
 
 # Bot-to-Bot 主动发起（trusted_bot_id 路径）的粗粒度频率熔断。PR #134 的设计里
@@ -772,8 +784,8 @@ class ChannelManager:
             # require a second Dashboard pairing; explicitly disabled stays off.
             if not observe_group(msg):
                 return
-            # Stage marker for real QQ acceptance; never log group or member IDs.
-            print('[qq-group] auto_enable_passed forwarding_to_canvas', flush=True)
+            # Sample repeated traffic; do not print group/member IDs per message.
+            _log_qq_group_forward(msg.channel_id)
 
         is_bot = msg.sender_type in ('bot', 'app')
         trusted_bot_id = self._trusted_bot_id(msg) if is_bot else ''
