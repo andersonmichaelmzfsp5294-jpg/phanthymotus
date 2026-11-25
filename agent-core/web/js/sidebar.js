@@ -982,7 +982,7 @@ export async function openToolConfigModal(mcpId, toolName, configSchema) {
 
     const label = document.createElement('label');
     label.className = 'tool-config-label';
-    label.textContent = `${def.title || def.description || key}${required.includes(key) && !def['x-required-when'] && !(toolName === 'live_stream' && key === 'rtmp_url') ? ' *' : ''}`;
+    label.textContent = `${def.title || def.description || key}${required.includes(key) && !def['x-required-when'] ? ' *' : ''}`;
 
     let input;
     if (def.oneOf && Array.isArray(def.oneOf)) {
@@ -1349,7 +1349,7 @@ export async function openInstanceConfigModal(mcpId, toolName, instanceId, confi
     // were one field, so a description written to explain a trade-off became
     // the label and the form turned into an essay. A schema with no title
     // still falls back to its description, as before.
-    label.textContent = `${def.title || def.description || key}${required.includes(key) && !def['x-required-when'] && !(toolName === 'live_stream' && key === 'rtmp_url') ? ' *' : ''}`;
+    label.textContent = `${def.title || def.description || key}${required.includes(key) && !def['x-required-when'] ? ' *' : ''}`;
 
     let input;
     if (def.oneOf && Array.isArray(def.oneOf)) {
